@@ -1,0 +1,85 @@
+stages:
+  - build
+  - upload_whl
+  - release
+
+build_test:
+  stage: build
+  image:
+    name: tpu-perf:0103-2
+    pull_policy: if-not-present
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master"
+    - if: '$CI_PIPELINE_SOURCE == "push"'
+      when: always
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      when: always
+    - when: never
+  variables:
+    SCRIPTS_PATH: ".github/workflows/build.sh"
+    PYTHON_VERSION: "3.7"
+  before_script:
+    - chmod +x $SCRIPTS_PATH
+    - apt-get update -qy
+    - apt-get install -y python${PYTHON_VERSION} python${PYTHON_VERSION}-dev python${PYTHON_VERSION}-distutils
+    - update-alternatives --install /usr/bin/python python /usr/bin/python${PYTHON_VERSION} 1
+    - update-alternatives --install /usr/bin/python3 python3 /usr/bin/python${PYTHON_VERSION} 1
+    - apt-get install -y python3-pip libblas-dev liblapack-dev wget unzip libatlas-base-dev libgl1-mesa-glx
+    - mkdir -p ~/.pip && echo -e "[global]\nindex-url = https://pypi.tuna.tsinghua.edu.cn/simple" > ~/.pip/pip.conf
+    - pip3 install --upgrade pip
+    - pip3 install scikit-build setuptools==41.0.0 
+    - pip3 install Cpython Cython
+    - pip3 install numpy
+  script:
+    - "bash $SCRIPTS_PATH"
+  artifacts:
+    paths:
+      - example/output/pnet/*.log
+      - example/output/pnet/log/*.log
+      - python/dist/*.whl
+
+upload_artifacts:
+  stage: upload_whl
+  needs:
+    - job: build_test
+      artifacts: true
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v?\d+\.\d+\.\d+$/'
+  variables:
+    PACKAGE_VERSION: "${CI_COMMIT_TAG}"
+    PACKAGE_REGISTRY_URL: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/tpu-perf/${PACKAGE_VERSION}"
+  image:
+    name: curlimages/curl:latest
+    pull_policy: if-not-present
+  script:
+    - |
+      mv python/dist/*aarch64.whl tpu_perf-${PACKAGE_VERSION#v}-py3-none-manylinux2014_aarch64.whl
+    - |
+      mv python/dist/*x86_64.whl tpu_perf-${PACKAGE_VERSION#v}-py3-none-manylinux2014_x86_64.whl
+    - |
+      curl --header "JOB-TOKEN: $CI_JOB_TOKEN" \
+        --upload-file tpu_perf-${PACKAGE_VERSION#v}-py3-none-manylinux2014_aarch64.whl \
+        "${PACKAGE_REGISTRY_URL}/tpu_perf-${PACKAGE_VERSION#v}-py3-none-manylinux2014_aarch64.whl"
+    - |
+      curl --header "JOB-TOKEN: $CI_JOB_TOKEN" \
+        --upload-file tpu_perf-${PACKAGE_VERSION#v}-py3-none-manylinux2014_x86_64.whl \
+        "${PACKAGE_REGISTRY_URL}/tpu_perf-${PACKAGE_VERSION#v}-py3-none-manylinux2014_x86_64.whl"
+
+release_job:
+  stage: release
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v?\d+\.\d+\.\d+$/'
+  when: on_success
+  variables:
+    PACKAGE_VERSION: "${CI_COMMIT_TAG}"
+    PACKAGE_REGISTRY_URL: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/tpu-perf/${PACKAGE_VERSION}"
+  image: 
+    name: registry.gitlab.com/gitlab-org/release-cli:latest
+    pull_policy: if-not-present
+  script:
+    - |
+      release-cli create --name "Release ${CI_COMMIT_TAG}" \
+        --description "${CI_COMMIT_MESSAGE}" --tag-name "${CI_COMMIT_TAG}" \
+        --ref "$CI_COMMIT_SHA" \
+        --assets-link "{\"name\":\"tpu_perf-${PACKAGE_VERSION#v}-py3-none-manylinux2014_x86_64.whl\",\"url\":\"${PACKAGE_REGISTRY_URL}/tpu_perf-${PACKAGE_VERSION#v}-py3-none-manylinux2014_x86_64.whl\"}" \
+        --assets-link "{\"name\":\"tpu_perf-${PACKAGE_VERSION#v}-py3-none-manylinux2014_aarch64.whl\",\"url\":\"${PACKAGE_REGISTRY_URL}/tpu_perf-${PACKAGE_VERSION#v}-py3-none-manylinux2014_aarch64.whl\"}"
