@@ -9,6 +9,7 @@ import subprocess
 
 def get_version_from_tag():
     ret, val = subprocess.getstatusoutput('git describe --tags')
+    print('git describe --tags', ret, val)
     if ret != 0:
         return '9.9.9'
     m = re.match('v(\d+\.\d+\.\d+)(-.+)*', val)

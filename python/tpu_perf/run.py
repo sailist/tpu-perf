@@ -1,5 +1,4 @@
 import os
-import shutil
 import re
 import csv
 import math
@@ -60,7 +59,7 @@ def read_profile(fn):
             if key == 'flops':
                 sum[key] = data[key]
                 continue
-            if key in sum:
+            if key in sum and "vggssd" not in fn:
                 sum[key] += data[key]
             else:
                 sum[key] = data[key]
@@ -87,11 +86,11 @@ def format_float(v):
     else:
         return f'{v:.03e}'
 
-def run_model(tree, config, name, b, profile_path, bmodel, stat_f, launch_time_f, extra, cache=False):
-    ok = True, ""
+def run_model(tree, config, name, b, profile_path, bmodel, stat_f, launch_time_f, extra):
+    ok = True
     if not os.path.exists(bmodel):
         logging.error(f'{bmodel} does not exist')
-        return False, "not-found"
+        return False
     title = f'run.{name}'
     workdir = config['workdir']
     env = [
@@ -103,8 +102,6 @@ def run_model(tree, config, name, b, profile_path, bmodel, stat_f, launch_time_f
     if 'iter_opt' in config:
         iter_opt = config['iter_opt']
     bmodel_dir = os.path.dirname(bmodel)
-    
-    
 
     info = None
     rounds = None
@@ -131,20 +128,7 @@ def run_model(tree, config, name, b, profile_path, bmodel, stat_f, launch_time_f
     cmd_opts = ['bmrt_test', '--dev', str(dev)]
     rt_cmp = config.get('runtime_cmp', True)
     if rt_cmp:
-        if cache:
-            cache_fn = f"{bmodel_dir}.bmrt_test.cmp.log"
-            if os.path.exists(cache_fn):
-                shutil.copy(f"{bmodel_dir}.bmrt_test.cmp.log",f"compare-{title}.log")
-            if not os.path.exists(f"compare-{title}.log"):
-                logging.warning(f"use cache but cache file {cache_fn} not exists.")
-                ok = False, "no-cache-file-found"
-            else:
-                with open(f"compare-{title}.log") as r:
-                    lines = r.readlines()
-                    for i in lines:
-                        if "cmp failed" in i:
-                            ok = False, 'compare-failed'
-        elif os.path.exists(ref_fn) and os.path.getsize(ref_fn):
+        if os.path.exists(ref_fn) and os.path.getsize(ref_fn):
             logging.info(f'Runtime compare {full_name}')
             pool.put(
                 'compare-' + title,
@@ -153,7 +137,7 @@ def run_model(tree, config, name, b, profile_path, bmodel, stat_f, launch_time_f
             try:
                 pool.wait()
             except:
-                ok = False, 'compare-failed'
+                ok = False
                 logging.error(f'Runtime compare {full_name} {bmodel_dir} failed')
         else:
             logging.warning(f'{full_name} has no reference data')
@@ -163,55 +147,37 @@ def run_model(tree, config, name, b, profile_path, bmodel, stat_f, launch_time_f
     cmd_opts.extend([iter_opt, str(int(rounds))])
     target = tree.global_config['target']
     if config['parallel'] and config["num_core"] == 1 and target == 'BM1688':
-        if cache:
-            cache_fn = f"{bmodel_dir}.bmrt_test.mp.log"
-            if os.path.exists(cache_fn):
-                shutil.copy(f"{bmodel_dir}.bmrt_test.mp.log",f"{title}-parallel.log")
-            elif not os.path.exists(f"{title}-parallel.log"):
-                logging.warning(f"use cache but cache file {cache_fn} not exists.")
-                ok = False, "no-cache-file-found"
-            cpu_percent_parallel = 0
-        else:
-            logging.info(f'Runtime test {full_name} x{int(rounds)} parallel')
-            pool.put(
-                title + '-parallel',
-                [*cmd_opts, '--core_list', '0:1', '--bmodel', bmodel],
-                shell=False)
-            try:
-                pool.fire()
-                pid = pool.pipes[0].pid
-                p = psutil.Process(pid)
-                cpu_percent_parallel = p.cpu_percent(interval=1) / 100
-                pool.drain()
-                pool.procs.clear()
-            except:
-                ok = False
-                logging.error(f'Runtime test {full_name} parallel failed')
-
-    logging.info(f'Runtime test {full_name} x{int(rounds)}')
-    if cache:
-        cache_fn = f"{bmodel_dir}.bmrt_test.log"
-        if os.path.exists(cache_fn):
-            shutil.copy(f"{bmodel_dir}.bmrt_test.log",f"{title}.log")        
-        elif not os.path.exists(f"{title}.log"):
-            logging.warning(f"use cache but cache file {cache_fn} not exists.")
-            ok = False, "no-cache-file-found"
-        cpu_percent = 0
-    else:
+        logging.info(f'Runtime test {full_name} x{int(rounds)} parallel')
         pool.put(
-            title,
-            [*cmd_opts, '--bmodel', bmodel],
+            title + '-parallel',
+            [*cmd_opts, '--core_list', '0:1', '--bmodel', bmodel],
             shell=False)
         try:
             pool.fire()
             pid = pool.pipes[0].pid
             p = psutil.Process(pid)
-            cpu_percent = p.cpu_percent(interval=1) / 100
+            cpu_percent_parallel = p.cpu_percent(interval=1) / 100
             pool.drain()
             pool.procs.clear()
-        except RuntimeError:
-            logging.error(f'Runtime test {full_name} failed')
-            raise
+        except:
+            ok = False
+            logging.error(f'Runtime test {full_name} parallel failed')
+
+    logging.info(f'Runtime test {full_name} x{int(rounds)}')
+    pool.put(
+        title,
+        [*cmd_opts, '--bmodel', bmodel],
+        shell=False)
+    try:
+        pool.fire()
+        pid = pool.pipes[0].pid
+        p = psutil.Process(pid)
+        cpu_percent = p.cpu_percent(interval=1) / 100
+        pool.drain()
+        pool.procs.clear()
+    except RuntimeError:
+        logging.error(f'Runtime test {full_name} failed')
+        raise
 
     # If profile exists, calculate mac & ddr utilization
     mac_configs = {
@@ -312,18 +278,13 @@ def csv_writerow(workdir, title, iter_opt, rounds, config, b, model_name, extra,
     return
 
 
-def run_mlir(tree, path, raw_config, stat_f, launch_time_f, extra, cache=False):
-    """
-    return tuple, first elem contains succeed cases, second for failed.
-    """
+def run_mlir(tree, path, raw_config, stat_f, launch_time_f, extra):
+    ok = True
     workdir = raw_config['workdir']
     deploies = raw_config.get('deploy', [])
     if not deploies:
-        return [raw_config['name']], []
+        return ok
 
-    succeed = []
-    failed = []
-    
     parser = argparse.ArgumentParser(description='MLIR deploy')
     parser.add_argument(
         "--quantize", default="F32",
@@ -356,22 +317,17 @@ def run_mlir(tree, path, raw_config, stat_f, launch_time_f, extra, cache=False):
         if args.asymmetric:
             name += '-asym'
         raw_config['prec'] = name
-        ok, msg = run_model(
+        ok = run_model(
             tree, raw_config,
             name,
             1,
             profile_path,
             bmodel if os.path.exists(bmodel) else args.model,
-            stat_f, launch_time_f, extra, cache)
+            stat_f, launch_time_f, extra) and ok
 
-        expand_name = os.path.basename(args.model).replace(".bmodel",'')
-        if ok:
-            succeed.append(' '.join([os.path.basename(raw_config['workdir']),expand_name]))
-        else:
-            failed.append(' '.join([os.path.basename(raw_config['workdir']),expand_name, f"({msg})"]))
-    return succeed, failed
+    return ok
 
-def run_nntc(tree, path, raw_config, stat_f, launch_time_f, extra, cache=False):
+def run_nntc(tree, path, raw_config, stat_f, launch_time_f, extra):
     ok = True
 
     if not raw_config.get('time', True):
@@ -399,7 +355,7 @@ def run_nntc(tree, path, raw_config, stat_f, launch_time_f, extra, cache=False):
             profile_path = os.path.join(bmodel_dir, profile_fn)
             if 'prec' not in config:
                 config['prec'] = 'FP32'
-            ok, msg = run_model(
+            ok = run_model(
                 tree, config, name, b, profile_path,
                 bmodel, stat_f, launch_time_f, extra) and ok
 
@@ -420,7 +376,7 @@ def run_nntc(tree, path, raw_config, stat_f, launch_time_f, extra, cache=False):
             profile_path = os.path.join(bmodel_dir, profile_fn)
             if 'prec' not in config:
                 config['prec'] = 'INT8'
-            ok, msg = run_model(
+            ok = run_model(
                 tree, config, name, b, profile_path,
                 bmodel, stat_f, launch_time_f, extra) and ok
 
@@ -447,7 +403,6 @@ def main():
     parser = argparse.ArgumentParser(description='tpu-perf benchmark tool')
     BuildTree.add_arguments(parser)
     parser.add_argument('--cmodel', action='store_true')
-    parser.add_argument('--use_cache', action='store_true', help='use bmrt_test log as cache to calculate report.')
     parser.add_argument('--report', type=str, help='report model runtime results to the specified json file')
     parser.add_argument('--parallel', type=bool, default=False, help='parallel run bmodels')
     parser.add_argument('--launch_time_csv', action='store_true', help='generate launch_time.csv')
@@ -521,19 +476,15 @@ def main():
                 config['parallel'] = True
             for i in range(len(config['core_list'])):
                 config['num_core'] = config['core_list'][i]
-                res = run_func(tree, path, config, csv_f, csv_l, extra, cache=args.use_cache)
-                if args.mlir:
-                    succ_cases.extend(res[0])
-                    failed_cases.extend(res[1])
-                else:
-                    succ_cases.append(config['name']) if res else failed_cases.append(config['name'])
+                res = run_func(tree, path, config, csv_f, csv_l, extra)
+                succ_cases.append(config['name']) if res else failed_cases.append(config['name'])
                 ok = res and ok
 
         if f_l:
             f_l.close()
     
     if args.report:
-        params = {"succ_cases": list(succ_cases), "failed_cases": list(failed_cases)}
+        params = {"succ_cases": list(set(succ_cases)), "failed_cases": list(set(failed_cases))}
         with open(f'{args.report}', 'w') as f:
             json.dump(params, f)
 
