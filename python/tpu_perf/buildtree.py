@@ -77,7 +77,7 @@ class BuildTree:
     def add_arguments(parser):
         parser.add_argument(
             'models', metavar='MODEL', type=str, nargs='*',
-            help='model directories to run')
+            help='model directories or config to run')
         parser.add_argument('--full', action='store_true', help='Run all cases')
         parser.add_argument('--outdir', '-o', type=str, help='Output path')
         parser.add_argument('--list', '-l', type=str, help='Case list')
@@ -195,11 +195,14 @@ class BuildTree:
                 dict(home=p), context, shallow=True, no_except=True)
             break
         fnlist=[]
-        for fn in os.listdir(path):
-            if not fn.endswith('config.yaml'):
-                continue
-            fn = os.path.join(path, fn)
-            fnlist.append(fn)
+        if path.endswith('config.yaml'):
+            fnlist.append(path)
+        else:
+            for fn in os.listdir(path):
+                if not fn.endswith('config.yaml'):
+                    continue
+                fn = os.path.join(path, fn)
+                fnlist.append(fn)
         fnlist.sort()
         for cf in fnlist:
             if not os.path.isfile(cf):
