@@ -35,12 +35,12 @@ class Runner:
         key = config['harness']['type']
         harness = get_harness(key)
 
-        def get_csv(stats):
+        def get_csv(stats, opt_title):
             if key not in self.stat_files:
                 fn = os.path.join(tree.global_config['outdir'], f'{key}.csv')
                 self.stat_files[key] = CSVWrapper(open(fn, 'w'))
                 csv_f = self.stat_files[key]
-                csv_f.writerow(['name'] + list(stats.keys()))
+                csv_f.writerow(['name'] + opt_title + list(stats.keys()))
             else:
                 csv_f = self.stat_files[key]
             return csv_f
@@ -55,13 +55,20 @@ class Runner:
                 name = tree.expand_variables(config, args['name'])
                 name_suffix = '' if num_core == 1 else f'-{num_core}core'
                 name = f'{config["name"]}-{name}{name_suffix}'
+                shape = config.get('shape_key')
                 if name in self.tested_names:
                     logging.warning(f'Skip duplicate {name}')
                     continue
                 self.tested_names.add(name)
                 stats = harness(tree, config, args)
+                opt = {'shape': shape}
+                opt_title, opt_row = [], []
+                for key in opt.keys():
+                    if not opt[key]:
+                        opt_title.append(key)
+                        opt_row.append(opt[key])
                 malloc_trim()
-                get_csv(stats).writerow([name] + [
+                get_csv(stats, opt_title).writerow([name] + opt_row + [
                     f'{v:.2%}' if type(v) == float else str(v)
                     for v in stats.values()])
 
