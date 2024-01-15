@@ -14,6 +14,8 @@ build_test:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
       when: always
     - when: never
+  tags:
+    - tpu_perf_build
   variables:
     SCRIPTS_PATH: ".github/workflows/build.sh"
     PYTHON_VERSION: "3.7"
@@ -38,6 +40,8 @@ upload_artifacts:
   image:
     name: curlimages/curl:latest
     pull_policy: if-not-present
+  tags:
+    - tpu_perf_build
   script:
     - |
       mv python/dist/*aarch64.whl tpu_perf-${PACKAGE_VERSION#v}-py3-none-manylinux2014_aarch64.whl
@@ -63,6 +67,8 @@ release_job:
   image: 
     name: registry.gitlab.com/gitlab-org/release-cli:latest
     pull_policy: if-not-present
+  tags:
+    - tpu_perf_build
   script:
     - |
       release-cli create --name "Release ${CI_COMMIT_TAG}" \
