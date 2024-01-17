@@ -63,10 +63,10 @@ class Runner:
                 stats = harness(tree, config, args)
                 opt = {'shape': shape}
                 opt_title, opt_row = [], []
-                for key in opt.keys():
-                    if not opt[key]:
-                        opt_title.append(key)
-                        opt_row.append(opt[key])
+                for key_opt in opt.keys():
+                    if opt[key_opt]:
+                        opt_title.append(key_opt)
+                        opt_row.append(opt[key_opt])
                 malloc_trim()
                 get_csv(stats, opt_title).writerow([name] + opt_row + [
                     f'{v:.2%}' if type(v) == float else str(v)
