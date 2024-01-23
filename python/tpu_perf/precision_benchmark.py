@@ -32,6 +32,13 @@ class Runner:
         if 'harness' not in config:
             return
         from .harness import get_harness
+        """
+        harness:
+            type: topk
+            args:
+            - name: INT8
+                bmodel: $(workdir)/$(name)_$(target)_$(num_core)_int8_sym.bmodel
+        """
         key = config['harness']['type']
         harness = get_harness(key)
 
@@ -48,6 +55,7 @@ class Runner:
         for args in config['harness']['args']:
             for num_core in config['core_list']:
                 config['num_core'] = num_core
+                shape_key = config['shape_key']
                 bmodel = tree.expand_variables(config, args['bmodel'])
                 if not os.path.exists(bmodel):
                     logging.warning(f'{bmodel} does not exist')
@@ -59,6 +67,7 @@ class Runner:
                 if name in self.tested_names:
                     logging.warning(f'Skip duplicate {name}')
                     continue
+                name = f'{config["name"]}_{num_core}_{key}_{shape_key}'
                 self.tested_names.add(name)
                 stats = harness(tree, config, args)
                 opt = {'shape': shape}
